@@ -42,31 +42,38 @@ const (
 )
 
 type Board struct {
-	size     int
-	long     int
-	board    []Color
-	stack    *stack
-	zh       *zobrist
-	histHash map[int]bool
-	posNum   int // pos num 黑白子数的和
-	histPos  []int
-	idxPos   []int
+	size       int
+	long       int
+	board      []Color
+	zh         *zobrist
+	histHash   map[int]bool
+	posNum     int // pos num 黑白子数的和
+	histPos    []int
+	idxPos     []int
+	neighbours [][]int
+	block      []int
+	colorNum   []int
 }
 
 func NewBoard(size int) *Board {
 	long := size * size
 	b := &Board{
-		long:     long,
-		size:     size,
-		board:    make([]Color, long),
-		stack:    &stack{s: make([]int, 0, long/2)},
-		zh:       newZobrist(long),
-		histHash: make(map[int]bool, MAXPLAYSISE*long),
-		histPos:  make([]int, long+1),
-		idxPos:   make([]int, long+1),
+		long:       long,
+		size:       size,
+		board:      make([]Color, long),
+		zh:         newZobrist(long),
+		histHash:   make(map[int]bool, MAXPLAYSISE*long),
+		histPos:    make([]int, long+1),
+		idxPos:     make([]int, long+1),
+		block:      make([]int, long),
+		colorNum:   make([]int, 3),
+		neighbours: make([][]int, long),
 	}
+
+	b.colorNum[EMPTY] = long
 	b.histHash[b.zh.hash] = true
 	for i := 0; i < long; i++ {
+		b.neighbours[i] = getNeighbours(i, size)
 		b.histPos[i] = i
 		b.idxPos[i] = i
 	}
@@ -74,44 +81,41 @@ func NewBoard(size int) *Board {
 	return b
 }
 
-// pos 能否到达c,如果不能把所有pos返回
-func (b *Board) isReachColorAndTint(c Color, pos int, tint Color) (bool, []int) {
-	b.stack.reset()
+// 获得从pos所在的块（颜色相同），切测试最终能否到达c色
+func (b *Board) GetBlockAndIsReachColorByPos(c Color, pos int, findReturn bool) (bool, []int) {
+	reach := false
 	pc := b.board[pos]
-	result := make([]int, 0, 2)
-	b.stack.push(pos)
-	b.board[pos] = tint
-	result = append(result, pos)
-	for !b.stack.isEmpty() {
-		p := b.stack.pop()
-		for _, p := range b.getNeighbours(p) {
+	block := b.block
+	l := 0
+	if pc == c {
+		reach = true
+		if findReturn {
+			return reach, block[:l]
+		}
+	}
+	block[l] = pos
+	b.board[pos] = REACH
+	l++
+loop:
+	for i := 0; i < l; i++ {
+		for _, p := range b.neighbours[block[i]] {
+			//fmt.Println(b.toXY(p), b.board[p], c)
 			if b.board[p] == c {
-				return true, result
+				reach = true
+				if findReturn {
+					break loop
+				}
 			} else if b.board[p] == pc {
-				b.board[p] = tint
-				result = append(result, p)
-				b.stack.push(p)
+				b.board[p] = REACH
+				block[l] = p
+				l++
 			}
 		}
 	}
-	return false, result
-}
-
-func (b *Board) IsReachColor(c Color, pos int) (bool, []int) {
-	pc := b.board[pos]
-	ok, reachPos := b.isReachColorAndTint(c, pos, REACH)
-	l := len(reachPos)
-	for i := 0; i < l; i++ {
-		p := reachPos[i]
-		if b.board[p] == REACH {
-			b.board[p] = pc
-		} else {
-			reachPos[i], reachPos[l-1] = reachPos[l-1], reachPos[i]
-			i--
-			l--
-		}
+	for _, p := range block[:l] {
+		b.board[p] = pc
 	}
-	return ok, reachPos[:l]
+	return reach, block[:l]
 }
 
 func (b *Board) randRun() (result int) {
@@ -121,8 +125,7 @@ func (b *Board) randRun() (result int) {
 	prePass := false
 	loopNum := 0
 	for {
-		//if b.posNum > 300 {
-		//	fmt.Println(loopNum, b.posNum)
+		//if b.posNum > 100 {
 		//	time.Sleep(time.Second / 20)
 		//	b.print()
 		//}
@@ -139,24 +142,21 @@ func (b *Board) randRun() (result int) {
 		}
 		player = reverseColor(player)
 	}
+	fmt.Println(loopNum, b.posNum, b.colorNum)
 	return b.calcResult()
 }
 
-func (b *Board) isOwer(c Color, pos int) bool {
-	ok, _ := b.IsReachColor(c, pos)
-	ok2, _ := b.IsReachColor(reverseColor(c), pos)
-	return ok && !ok2
-}
-
-func (b *Board) isOtherBig(c Color, pos int) bool {
-	rc := reverseColor(c)
-	ok, s := b.IsReachColor(rc, pos)
-	ok2, _ := b.IsReachColor(c, pos)
-	if ok && !ok2 && len(s) > 6 && b.posNum > 100 {
-		fmt.Println(len(s), ok, ok2, c, pos)
-		b.print()
+func (b *Board) isMineOrOtherBig(c Color, pos int) bool {
+	if b.colorNum[BLACK] == 0 || b.colorNum[WHITE] == 0 {
+		return false
 	}
-	return ok && !ok2 && len(s) > 6 && b.posNum > 100
+	rc := reverseColor(c)
+	ok, _ := b.GetBlockAndIsReachColorByPos(c, pos, true)
+	ok2, s := b.GetBlockAndIsReachColorByPos(rc, pos, false)
+	if ok && !ok2 {
+		return true // isMine
+	}
+	return !ok && ok2 && len(s) > 6 //isOtherBig
 }
 
 func (b *Board) calcResult() int {
@@ -198,13 +198,15 @@ func (b *Board) move(c Color, pos int) {
 	b.zh.hash = b.zh.hash ^ b.zh.player[reverseColor(c)]
 	if _, has := b.histHash[b.zh.hash]; has {
 		fmt.Println("真是hash重复", b.zh.hash)
+		panic("局面重复")
 	}
 	b.histHash[b.zh.hash] = true
 }
 
 func (b *Board) changeBoard(c Color, pos int) {
+	b.colorNum[b.board[pos]]--
+	b.colorNum[c]++
 	b.setColorAndHash(c, pos)
-	//b.recordPos(pos, b.posNum)
 	if c == EMPTY {
 		b.posNum--
 		b.switchIdx(b.idxPos[pos], b.posNum)
@@ -227,18 +229,24 @@ func (b *Board) randPos(c Color, r *rand.Rand) int {
 	for start < b.long {
 		idx := start + r.Intn(end)
 		if b.histPos[idx] == PASS {
-			//if start == b.long {
-			//return PASS
-			//}
 			continue
 		}
 		pos := b.histPos[idx]
-		if b.isForbidden(pos, c) || b.getTakeNum(c, pos) < 0 || b.isOwer(c, pos) ||
-			b.isOtherBig(c, pos) {
+
+		if b.board[pos] != EMPTY {
+			fmt.Println("错误", pos, b.board[pos], b.posNum)
+		}
+
+		isMineOrOtherBig := b.isMineOrOtherBig(c, pos)
+		pc := b.board[pos]
+		b.board[pos] = c
+		if b.isForbidden(pos, c) || b.getTakeNum(c, pos) < 0 || isMineOrOtherBig {
+			b.board[pos] = pc
 			b.switchIdx(idx, start)
 			start++
 			end--
 		} else {
+			b.board[pos] = pc
 			return b.histPos[idx]
 		}
 	}
@@ -247,11 +255,6 @@ func (b *Board) randPos(c Color, r *rand.Rand) int {
 }
 
 func (b *Board) isForbidden(pos int, c Color) bool {
-	if b.board[pos] != EMPTY {
-		fmt.Println("错误", pos, b.board[pos], b.posNum)
-		//time.Sleep(time.Second * 10)
-		return true
-	}
 	if b.isOneSuicide(pos, c) {
 		//fmt.Println(b.posNum, c, pos, "自杀")
 		return true
@@ -264,20 +267,19 @@ func (b *Board) isForbidden(pos int, c Color) bool {
 	return false
 }
 func (b *Board) isSuperKO(c Color, pos int) bool {
-	pc := reverseColor(c)
-	hb := b.zh.calcBoardHash(b.zh.hash, pos, EMPTY, c) ^ b.zh.player[pc]
-	b.board[pos] = c
-	defer func() { b.board[pos] = EMPTY }()
-	d1 := b.getDeadPos(reverseColor(c), pos)
-	if len(d1) == 0 {
-		pc = c
-		d1 = b.getDeadPos(c, pos)
+	rc := reverseColor(c)
+	hb := b.zh.calcBoardHash(b.zh.hash, pos, EMPTY, c) ^ b.zh.player[rc]
+	deadPos := b.getDeadPos(rc, pos)
+	deadColor := rc
+	if len(deadPos) == 0 {
+		deadColor = c
+		deadPos = b.getDeadPos(c, pos)
 	}
-	for _, p := range d1 {
+	for _, p := range deadPos {
 		//if b.board[p] == EMPTY {
 		//	continue
 		//}
-		hb = b.zh.calcBoardHash(hb, p, pc, EMPTY)
+		hb = b.zh.calcBoardHash(hb, p, deadColor, EMPTY)
 	}
 
 	if _, has := b.histHash[hb]; has {
@@ -291,27 +293,21 @@ func (b *Board) isSuperKO(c Color, pos int) bool {
 
 func (b *Board) isOneSuicide(pos int, c Color) bool {
 	rc := reverseColor(c)
-	pc := b.board[pos]
-	if len(b.getNeighbours(pos)) == len(b.getNeighboursByColor(rc, pos)) {
-		//if pos%b.size != 0 && b.board[pos-1] == rc && // have left Neighbours
-		//	pos%b.size != b.size-1 && b.board[pos+1] == rc && // have right Neighbours
-		//	pos >= b.size && b.board[pos-b.size] == rc && // have up Neighbours
-		//	pos <= b.long-b.size && b.board[pos+b.size] == rc { //have down Neighbours
-		b.board[pos] = c
-		defer func() { b.board[pos] = pc }()
-		n := len(b.getDeadPos(rc, pos))
-		if n <= 0 {
-			return true
-		} else {
-			//fmt.Println("无气落子，提n颗", n, c, pos)
+	for _, p := range b.neighbours[pos] {
+		if b.board[p] == EMPTY || b.board[p] == c {
+			return false
 		}
+	}
+	n := len(b.getDeadPos(rc, pos))
+	if n <= 0 {
+		return true
+	} else {
+		//fmt.Println("无气落子，提n颗", n, c, pos)
 	}
 	return false
 }
 
 func (b *Board) getTakeNum(c Color, pos int) int {
-	b.board[pos] = c
-	defer func() { b.board[pos] = EMPTY }()
 	n := len(b.getDeadPos(reverseColor(c), pos))
 	if n > 0 {
 		return n
@@ -333,18 +329,21 @@ func (b *Board) TakeColor(c Color, pos int) int {
 	return ret
 }
 
+//获得pos相邻的c色死子
 func (b *Board) getDeadPos(c Color, pos int) []int {
 	deadPos := make([]int, 0, 8)
-	nbs := b.getNeighboursByColor(c, pos)
+	nbs := b.neighbours[pos]
 	tm := make(map[int]bool, 10)
 	for _, p := range nbs {
-		if ok, r := b.IsReachColor(EMPTY, p); !ok {
-			for _, pp := range r {
-				if tm[pp] {
-					break
-				} else {
-					tm[pp] = true
-					deadPos = append(deadPos, pp)
+		if b.board[p] == c {
+			if ok, block := b.GetBlockAndIsReachColorByPos(EMPTY, p, true); !ok {
+				for _, pp := range block {
+					if tm[pp] {
+						break
+					} else {
+						tm[pp] = true
+						deadPos = append(deadPos, pp)
+					}
 				}
 			}
 		}
@@ -352,57 +351,31 @@ func (b *Board) getDeadPos(c Color, pos int) []int {
 	return deadPos
 }
 
-func (b *Board) getSameColorNeighbours(pos int) []int {
-	return b.getNeighboursByColor(b.board[pos], pos)
+func getNeighbours(pos, size int) []int {
+	nb := make([]int, 4)
+	i := 0
+	//have left
+	if pos%size != 0 {
+		nb[i] = pos - 1
+		i++
+	}
+	//have right
+	if pos%size != size-1 {
+		nb[i] = pos + 1
+		i++
+	}
+	//have up
+	if pos >= size {
+		nb[i] = pos - size
+		i++
+	}
+	//have down
+	if pos < size*(size-1) {
+		nb[i] = pos + size
+		i++
+	}
+	return nb[:i]
 }
-func (b *Board) getNeighbours(pos int) []int {
-	var nbs = make([]int, 0, 4)
-	if pos >= b.long && pos < 0 {
-		return nbs
-	}
-	// have left
-	if pos%b.size != 0 {
-		nbs = append(nbs, pos-1)
-	}
-	// have right
-	if pos%b.size != b.size-1 {
-		nbs = append(nbs, pos+1)
-	}
-	// have up
-	if pos >= b.size {
-		nbs = append(nbs, pos-b.size)
-	}
-	// have down
-	if pos < b.long-b.size {
-		nbs = append(nbs, pos+b.size)
-	}
-	return nbs
-}
-
-func (b *Board) getNeighboursByColor(c Color, pos int) []int {
-	var nbs = make([]int, 0, 4)
-	if pos >= b.long && pos < 0 {
-		return nbs
-	}
-	// have left
-	if pos%b.size != 0 && b.board[pos-1] == c {
-		nbs = append(nbs, pos-1)
-	}
-	// have right
-	if pos%b.size != b.size-1 && b.board[pos+1] == c {
-		nbs = append(nbs, pos+1)
-	}
-	// have up
-	if pos >= b.size && b.board[pos-b.size] == c {
-		nbs = append(nbs, pos-b.size)
-	}
-	// have down
-	if pos < b.long-b.size && b.board[pos+b.size] == c {
-		nbs = append(nbs, pos+b.size)
-	}
-	return nbs
-}
-
 func (b *Board) switchIdx(i1, i2 int) {
 	v1 := b.histPos[i1]
 	v2 := b.histPos[i2]
@@ -425,33 +398,8 @@ func reverseColor(c Color) Color {
 	}
 }
 
-type stack struct {
-	s    []int
-	long int
-}
-
-func (s *stack) isEmpty() bool {
-	return s.long == 0
-}
-
-func (s *stack) reset() {
-	s.long = 0
-	s.s = s.s[0:0]
-}
-
-func (s *stack) pop() int {
-	s.long--
-	e := s.s[s.long]
-	s.s = s.s[:s.long]
-	return e
-}
-func (s *stack) push(e int) {
-	s.long++
-	s.s = append(s.s, e)
-}
-
-func (c Color) String() string {
-	return colorString[c]
+func (b *Board) toXY(pos int) string {
+	return fmt.Sprintf("%d,%d", pos/b.size+1, pos%b.size+1)
 }
 
 func (b *Board) print() {
@@ -466,9 +414,14 @@ func (b *Board) print() {
 			fmt.Print(" W")
 		} else if b.board[i] == EMPTY {
 			fmt.Print(" _")
+		} else if b.board[i] == REACH {
+			fmt.Print(" R")
 		} else {
 			fmt.Print(b.board[i])
 		}
 	}
 	fmt.Println()
+}
+func (c Color) String() string {
+	return colorString[c]
 }

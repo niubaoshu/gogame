@@ -7,8 +7,12 @@ import (
 
 func TestGame(t *testing.T) {
 	b := NewBoard(19)
-	fmt.Println(b.randRun())
+	r := b.randRun()
+	fmt.Println(r)
 	b.print()
+	if b.posNum != b.colorNum[WHITE]+b.colorNum[BLACK] || b.posNum+b.colorNum[EMPTY] != b.long {
+		t.Error("报错了")
+	}
 }
 
 func TestGame2(t *testing.T) {
