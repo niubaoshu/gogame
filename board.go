@@ -51,8 +51,8 @@ type Board struct {
 	deadCache  []int    // 死子缓存
 	idxPos     []int    // 索引每个pos在histPos中的index
 	histPos    []int    // [:b.posNum]已落子位置
-	colorNum   []int    // 棋盘上黑白空颜色数量
 	posNum     int      // 棋盘上总子数，黑加白
+	colorNum   [3]int   // 棋盘上黑白空颜色数量
 	moveNum    [3]int   // 走子总数
 	takeNum    [3]int   // 被提子数
 	score      [3]int   // 结果数单位是半子
@@ -68,7 +68,6 @@ func NewBoard(size int) *Board {
 		zh:         newZobrist(long),
 		histPos:    make([]int, long),
 		idxPos:     make([]int, long),
-		colorNum:   make([]int, 3),
 		neighbours: make([][]int, long),
 		blockCache: make([]int, long),
 		deadCache:  make([]int, long),
