@@ -1,15 +1,20 @@
 package goGame
 
 import (
-	"fmt"
 	"testing"
 )
 
 func TestGame(t *testing.T) {
 	b := NewBoard(19)
-	r := b.randRun()
-	fmt.Println(r)
-	b.print()
+	t.Log(b.randRun())
+	if (b.moveNum[WHITE] + b.moveNum[BLACK] - b.passNum[WHITE] - b.passNum[BLACK] - b.posNum - b.takeNum[BLACK] - b.takeNum[WHITE]) != 0 {
+		t.Error("报错了")
+	}
+
+	if (b.score[BLACK] + b.score[WHITE]) != b.long*2 {
+		t.Error("score 不对")
+	}
+
 	if b.posNum != b.colorNum[WHITE]+b.colorNum[BLACK] || b.posNum+b.colorNum[EMPTY] != b.long {
 		t.Error("报错了")
 	}
