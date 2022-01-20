@@ -57,6 +57,7 @@ type Board struct {
 	takeNum    [3]int   // 被提子数
 	score      [3]int   // 结果数单位是半子
 	passNum    [3]int   // pass统计
+	lastPos    int      // 最后一个落子位置
 }
 
 func NewBoard(size int) *Board {
@@ -120,7 +121,7 @@ loop:
 	return reach, block[:l]
 }
 
-func (b *Board) randRun() int {
+func (b *Board) randRun(display bool) int {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	player := BLACK
 	prePass := false
@@ -134,6 +135,7 @@ func (b *Board) randRun() int {
 			}
 			prePass = true
 		} else {
+			b.lastPos = p
 			prePass = false
 			b.move(player, p)
 		}
@@ -142,7 +144,9 @@ func (b *Board) randRun() int {
 		player = reverseColor(player)
 	}
 	b.calcResult()
-	b.print()
+	if display {
+		b.print()
+	}
 	return b.score[BLACK] - b.score[WHITE]
 }
 
@@ -237,11 +241,10 @@ func (b *Board) randPos(c Color, r *rand.Rand) int {
 			panic("随机到已落子的位置")
 		}
 
-		optimized := b.optimized(c, pos)
 		b.board[pos] = c
 		isIllegal := b.isIllegalPos(pos, c)
 		b.board[pos] = EMPTY
-		if isIllegal || optimized {
+		if isIllegal || b.optimized(c, pos) {
 			b.switchIdx(idx, start)
 			start++
 			end--
@@ -258,8 +261,22 @@ func (b *Board) optimized(c Color, pos int) bool {
 	if b.posNum < 2 {
 		return false
 	}
-	return b.isMyEyeOrRivalBigEye(c, pos)
+	//return b.isMyEyeOrRivalBigEye(c, pos)
+	return b.isMyTrueEye(c, pos)
 	//return false
+}
+
+func (b *Board) isMyTrueEye(c Color, pos int) bool {
+	ok, _ := b.isReachedColorAndGetBlock(c, pos, true)
+	ok2, _ := b.isReachedColorAndGetBlock(reverseColor(c), pos, true)
+	rc := reverseColor(c)
+	b.board[pos] = rc
+	canTake := b.canTake(c, pos)
+	b.board[pos] = EMPTY
+	if ok && !ok2 && !canTake { // 只能到达我方颜色且对方落此位置不能提子
+		return true // 我方眼位
+	}
+	return false
 }
 
 //判断是否是己方的眼位或对方的大眼
@@ -289,7 +306,7 @@ func (b *Board) isSuicide(pos int, c Color) bool {
 	rc := reverseColor(c)
 	if ok, _ := b.isReachedColorAndGetBlock(EMPTY, pos, true); !ok { //无气
 		if !b.canTake(rc, pos) { // 不能提子
-			return true // 无气企且不能提子，自杀
+			return true // 无气且不能提子，自杀
 		}
 	}
 	return false
@@ -391,7 +408,8 @@ func (b *Board) print() {
 		b.posNum, b.colorNum[BLACK], b.colorNum[WHITE])
 	fmt.Printf("takeN:%3d ,takeB:%3d ,takeW:%3d ,scrN:%4d ,scrB:%4d ,scrW:%4d\n", b.takeNum[WHITE]+b.takeNum[BLACK], b.takeNum[WHITE], b.takeNum[BLACK],
 		b.score[BLACK]-b.score[WHITE], b.score[BLACK], b.score[WHITE])
-	fmt.Printf("passN:%3d ,passB:%3d ,passW:%3d\n ", b.passNum[WHITE]+b.passNum[BLACK], b.passNum[WHITE], b.passNum[BLACK])
+	fmt.Printf("passN:%3d ,passB:%3d ,passW:%3d ,boardhash:%d\n ", b.passNum[WHITE]+b.passNum[BLACK], b.passNum[WHITE], b.passNum[BLACK], b.zh.hash)
+	fmt.Println()
 	fmt.Print(" ")
 	for i := 0; i < b.size; i++ {
 		fmt.Printf("%2d", i+1)
@@ -400,7 +418,7 @@ func (b *Board) print() {
 		if i%b.size == 0 {
 			fmt.Printf("\n%2d", i/b.size+1)
 		}
-		if i == b.getLast() {
+		if i == b.lastPos {
 			if b.board[i] == BLACK {
 				fmt.Printf(" X")
 			} else if b.board[i] == WHITE {
@@ -422,10 +440,4 @@ func (b *Board) print() {
 }
 func (c Color) String() string {
 	return colorString[c]
-}
-func (b *Board) getLast() int {
-	if b.posNum == 0 {
-		return -1
-	}
-	return b.histPos[b.posNum-1]
 }

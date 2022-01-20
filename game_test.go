@@ -5,8 +5,14 @@ import (
 )
 
 func TestGame(t *testing.T) {
-	b := NewBoard(19)
-	t.Log(b.randRun())
+	testBoard(t, 19, true)
+	testBoard(t, 9, false)
+	testBoard(t, 10, false)
+}
+
+func testBoard(t *testing.T, size int, display bool) {
+	b := NewBoard(size)
+	t.Log(b.randRun(display))
 	if (b.moveNum[WHITE] + b.moveNum[BLACK] - b.passNum[WHITE] - b.passNum[BLACK] - b.posNum - b.takeNum[BLACK] - b.takeNum[WHITE]) != 0 {
 		t.Error("报错了")
 	}
@@ -18,8 +24,8 @@ func TestGame(t *testing.T) {
 	if b.posNum != b.colorNum[WHITE]+b.colorNum[BLACK] || b.posNum+b.colorNum[EMPTY] != b.long {
 		t.Error("报错了")
 	}
-}
 
+}
 func TestGame2(t *testing.T) {
 	//b := NewBoard(19)
 	//for i := 0; i < b.long-1; i++ {
