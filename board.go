@@ -29,9 +29,10 @@ var (
 )
 
 const (
-	EMPTY Color = iota
+	WHITE Color = iota
+	EMPTY
 	BLACK
-	WHITE
+
 	WALL
 	REACH
 	RESULT
@@ -41,10 +42,10 @@ const (
 	PASS      = -1
 )
 
-func (c Color) byte() (b1, b2 byte) {
-	//return []byte(strconv.Itoa(int(c) & 0x01))[0], []byte(strconv.Itoa((int(c) & 0x02) >> 1))[0]
-	return byte(c) & 0x01, (byte(c) & 0x02) >> 1
-	//return byte(c)&0x01 + byte('0'), (byte(c)&0x02)>>1 + byte(0)
+func (c Color) byte() byte {
+	return byte(c - EMPTY)
+	//return (byte(c) & 0x02) >> 1, byte(c) & 0x01
+	//return  (byte(c)&0x02)>>1 + byte('0'), byte(c)&0x01 + byte('0')
 }
 
 type Board struct {
@@ -80,7 +81,7 @@ func NewBoard(size int) *Board {
 		blockCache: make([]int, long),
 		deadCache:  make([]int, long),
 		lastPos:    -1,
-		bytes:      make([]byte, long*2),
+		bytes:      make([]byte, long+2), // x+y
 	}
 
 	b.colorNum[EMPTY] = long
@@ -88,14 +89,20 @@ func NewBoard(size int) *Board {
 		b.neighbours[i] = getNeighbours(i, size)
 		b.histPos[i] = i
 		b.idxPos[i] = i
+		b.board[i] = EMPTY
 	}
 	return b
+}
+func (b *Board) GenGame() []byte {
+	b.RandRun()
+	b.CalcScore()
+	return b.Bytes()
 }
 
 func (b *Board) Reset(bytes []byte) {
 	b.lastPos = -1
 	b.posNum = 0
-	for i := EMPTY; i <= WHITE; i++ {
+	for i := WHITE; i <= BLACK; i++ {
 		b.colorNum[i] = 0
 		b.moveNum[i] = 0
 		b.takeNum[i] = 0
@@ -150,7 +157,7 @@ loop:
 	return reach, block[:l]
 }
 
-func (b *Board) RandRun(display bool) int {
+func (b *Board) RandRun() {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	player := BLACK
 	prePass := false
@@ -168,19 +175,13 @@ func (b *Board) RandRun(display bool) int {
 			prePass = false
 			b.move(player, p)
 		}
-		//time.Sleep(time.Second)
-		//b.print()
 		player = reverseColor(player)
 	}
-	b.calcResult()
-	if display {
-		b.print()
-	}
-	return (b.score[BLACK] - b.score[WHITE]) / 2
+	return
 }
 
 // 数子法
-func (b *Board) calcResult() {
+func (b *Board) CalcScore() int {
 	wScore := 0
 	bScore := 0
 	for i := 0; i < b.long; i++ {
@@ -206,9 +207,12 @@ func (b *Board) calcResult() {
 			panic("sss")
 		}
 	}
-	//fmt.Println(wScore + bScore)
-	b.score[WHITE] = wScore
-	b.score[BLACK] = bScore
+	b.score[WHITE] = wScore / 2
+	b.score[BLACK] = bScore / 2
+	sum := (bScore - wScore) / 2
+	b.score[EMPTY] = sum
+	return sum
+
 }
 
 func (b *Board) move(c Color, pos int) {
@@ -438,16 +442,15 @@ func reverseColor(c Color) Color {
 	}
 }
 
-func (b *Board) toXY(pos int) string {
+func (b *Board) ToXY(pos int) string {
 	return fmt.Sprintf("%d,%d", pos/b.size+1, pos%b.size+1)
 }
 
-func (b *Board) print() {
-	//time.Sleep(time.Second)
+func (b *Board) Display() {
 	fmt.Printf("moveN:%3d ,moveB:%3d ,moveW:%3d ,posN:%4d ,posB:%4d ,posW:%4d\n", b.moveNum[WHITE]+b.moveNum[BLACK], b.moveNum[WHITE], b.moveNum[BLACK],
 		b.posNum, b.colorNum[BLACK], b.colorNum[WHITE])
 	fmt.Printf("takeN:%3d ,takeB:%3d ,takeW:%3d ,scrN:%3d ,scrB:%3d ,scrW:%3d\n", b.takeNum[WHITE]+b.takeNum[BLACK], b.takeNum[WHITE], b.takeNum[BLACK],
-		(b.score[BLACK]-b.score[WHITE])/2, (b.score[BLACK])/2, (b.score[WHITE])/2)
+		b.score[EMPTY], b.score[BLACK], b.score[WHITE])
 	fmt.Printf("passN:%3d ,passB:%3d ,passW:%3d ,boardhash:%d\n ", b.passNum[WHITE]+b.passNum[BLACK], b.passNum[WHITE], b.passNum[BLACK], b.zh.hash)
 	fmt.Println()
 	fmt.Print("  ")
@@ -476,8 +479,8 @@ func (b *Board) print() {
 			fmt.Print(b.board[i])
 		}
 	}
-	fmt.Println()
-	fmt.Println(b.Bytes())
+	fmt.Printf("\n\n")
+	//fmt.Println(b.Bytes())
 }
 func (c Color) String() string {
 	return colorString[c]
@@ -487,16 +490,20 @@ func (b *Board) Bytes() []byte {
 	bs := b.bytes
 	l := b.long
 	for i := 0; i < l; i++ {
-		bs[2*i], bs[2*i+1] = b.board[i].byte()
+		bs[i] = byte(b.board[i] - EMPTY)
 	}
+	score := b.score[EMPTY]
+	bs[l] = byte(score >> 8)
+	bs[l+1] = byte(score)
 	return bs
 }
 
 func (b *Board) CheckError() error {
 	if (b.moveNum[WHITE] + b.moveNum[BLACK] - b.passNum[WHITE] - b.passNum[BLACK] - b.posNum - b.takeNum[BLACK] - b.takeNum[WHITE]) != 0 {
+		fmt.Println(b.moveNum, b.passNum, b.takeNum)
 		return fmt.Errorf("走子，落子，和提子不对")
 	}
-	if (b.score[BLACK] + b.score[WHITE]) != b.long*2 {
+	if (b.score[BLACK] + b.score[WHITE]) != b.long {
 		return fmt.Errorf("得分不对")
 	}
 	if b.posNum != b.colorNum[WHITE]+b.colorNum[BLACK] || b.posNum+b.colorNum[EMPTY] != b.long {

@@ -10,10 +10,12 @@ import (
 )
 
 func main() {
-	var num int64 = 10000000
+	var num int64 = 2
 	sum := num
 	size := 19
-	n := 100
+	long := size * size
+	long2 := long + 2
+	n := 50
 	in := make(chan []byte, n)
 	out := make(chan []byte, 4*n)
 	var wg sync.WaitGroup
@@ -24,13 +26,13 @@ func main() {
 				fmt.Println("Recovered in f", r)
 			}
 		}()
-		err := openFile("goGame.data", in, out, done)
+		err := openFile(long, "goGame.data", in, out, done)
 		if err != nil {
 			fmt.Println(err)
 		}
 	}()
-	for i := 0; i < 4*n; i++ {
-		out <- make([]byte, 2*size*size)
+	for i := 0; i < 3*n; i++ {
+		out <- make([]byte, long2)
 	}
 	wg.Add(n)
 	for i := 0; i < n; i++ {
@@ -38,12 +40,7 @@ func main() {
 			defer wg.Done()
 			g := goGame.NewBoard(size)
 			for atomic.AddInt64(&num, -1) >= 0 {
-				g.RandRun(false)
-				if err := g.CheckError(); err != nil {
-					fmt.Println(err)
-				} else {
-					in <- g.Bytes()
-				}
+				in <- g.GenGame()
 				g.Reset(<-out)
 			}
 		}()
@@ -59,25 +56,34 @@ func main() {
 			os.Exit(0)
 		default:
 			time.Sleep(time.Second * 1)
-			fmt.Println(float64(num)/float64(sum), perNum-num)
+			fmt.Println(1-float64(num)/float64(sum), perNum-num)
 			perNum = num
 		}
 	}
 }
 
-func openFile(name string, in, out chan []byte, done chan struct{}) error {
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, 0700)
+func openFile(l int, name string, in, out chan []byte, done chan struct{}) error {
+	xf, err := os.OpenFile(name+"x", os.O_CREATE|os.O_RDWR, 0700)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	yf, err := os.OpenFile(name+"y", os.O_CREATE|os.O_RDWR, 0700)
+	if err != nil {
+		return err
+	}
+	defer xf.Close()
+	defer yf.Close()
 breakLabel:
 	for {
 		select {
 		case data, ok := <-in:
 			if ok {
 				//fmt.Println(data)
-				//_, err := f.Write(data)
+				_, err := xf.Write(data[:l])
+				if err != nil {
+					fmt.Println(err)
+				}
+				_, err = yf.Write(data[l:])
 				if err != nil {
 					fmt.Println(err)
 				}
