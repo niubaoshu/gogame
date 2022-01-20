@@ -30,3 +30,8 @@ func newZobrist(long int) *zobrist {
 func (z *zobrist) calcBoardHash(perHash, pos int, oldColor, newColor Color) int {
 	return perHash ^ z.boardHash[oldColor][pos] ^ z.boardHash[newColor][pos]
 }
+func (z *zobrist) reset() {
+	for k, _ := range z.histHash {
+		delete(z.histHash, k)
+	}
+}

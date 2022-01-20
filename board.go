@@ -30,8 +30,8 @@ var (
 
 const (
 	EMPTY Color = iota
-	WHITE
 	BLACK
+	WHITE
 	WALL
 	REACH
 	RESULT
@@ -40,6 +40,12 @@ const (
 	playerNum = 2
 	PASS      = -1
 )
+
+func (c Color) byte() (b1, b2 byte) {
+	//return []byte(strconv.Itoa(int(c) & 0x01))[0], []byte(strconv.Itoa((int(c) & 0x02) >> 1))[0]
+	return byte(c) & 0x01, (byte(c) & 0x02) >> 1
+	//return byte(c)&0x01 + byte('0'), (byte(c)&0x02)>>1 + byte(0)
+}
 
 type Board struct {
 	size       int //棋盘大小
@@ -51,13 +57,14 @@ type Board struct {
 	deadCache  []int    // 死子缓存
 	idxPos     []int    // 索引每个pos在histPos中的index
 	histPos    []int    // [:b.posNum]已落子位置
-	posNum     int      // 棋盘上总子数，黑加白
+	bytes      []byte   // bytes
 	colorNum   [3]int   // 棋盘上黑白空颜色数量
 	moveNum    [3]int   // 走子总数
 	takeNum    [3]int   // 被提子数
 	score      [3]int   // 结果数单位是半子
 	passNum    [3]int   // pass统计
 	lastPos    int      // 最后一个落子位置
+	posNum     int      // 棋盘上总子数，黑加白
 }
 
 func NewBoard(size int) *Board {
@@ -72,6 +79,8 @@ func NewBoard(size int) *Board {
 		neighbours: make([][]int, long),
 		blockCache: make([]int, long),
 		deadCache:  make([]int, long),
+		lastPos:    -1,
+		bytes:      make([]byte, long*2),
 	}
 
 	b.colorNum[EMPTY] = long
@@ -81,6 +90,27 @@ func NewBoard(size int) *Board {
 		b.idxPos[i] = i
 	}
 	return b
+}
+
+func (b *Board) Reset(bytes []byte) {
+	b.lastPos = -1
+	b.posNum = 0
+	for i := EMPTY; i <= WHITE; i++ {
+		b.colorNum[i] = 0
+		b.moveNum[i] = 0
+		b.takeNum[i] = 0
+		b.score[i] = 0
+		b.passNum[i] = 0
+	}
+	long := b.long
+	b.colorNum[EMPTY] = long
+	for i := 0; i < long; i++ {
+		b.board[i] = EMPTY
+		b.histPos[i] = i
+		b.idxPos[i] = i
+	}
+	b.bytes = bytes
+	b.zh.reset()
 }
 
 // 获得pos所在的块，并测试pos所在的块能否到达c色
@@ -101,7 +131,6 @@ func (b *Board) isReachedColorAndGetBlock(c Color, pos int, noBlock bool) (bool,
 loop:
 	for i := 0; i < l; i++ {
 		for _, nb := range b.neighbours[block[i]] {
-			//fmt.Println(b.toXY(p), b.board[p], c)
 			nbc := b.board[nb]
 			if !reach && nbc == c {
 				reach = true
@@ -121,7 +150,7 @@ loop:
 	return reach, block[:l]
 }
 
-func (b *Board) randRun(display bool) int {
+func (b *Board) RandRun(display bool) int {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	player := BLACK
 	prePass := false
@@ -147,7 +176,7 @@ func (b *Board) randRun(display bool) int {
 	if display {
 		b.print()
 	}
-	return b.score[BLACK] - b.score[WHITE]
+	return (b.score[BLACK] - b.score[WHITE]) / 2
 }
 
 // 数子法
@@ -195,7 +224,7 @@ func (b *Board) move(c Color, pos int) {
 	}
 	// history
 	if _, has := b.zh.histHash[b.zh.hash]; has {
-		fmt.Println("真是hash重复", b.zh.hash)
+		fmt.Println("真是hash重复", b.zh.hash, len(b.zh.histHash))
 		panic("局面重复")
 	}
 	b.zh.histHash[b.zh.hash] = true
@@ -232,6 +261,8 @@ func (b *Board) setColorAndHash(c Color, pos int) {
 func (b *Board) randPos(c Color, r *rand.Rand) int {
 	start := b.posNum
 	end := b.long - b.posNum
+	illegalN := 0
+	optimizedN := 0
 	for start < b.long {
 		idx := start + r.Intn(end)
 		pos := b.histPos[idx]
@@ -244,7 +275,14 @@ func (b *Board) randPos(c Color, r *rand.Rand) int {
 		b.board[pos] = c
 		isIllegal := b.isIllegalPos(pos, c)
 		b.board[pos] = EMPTY
-		if isIllegal || b.optimized(c, pos) {
+		if isIllegal {
+			illegalN++
+		}
+		optimized := b.optimized(c, pos)
+		if optimized {
+			optimizedN++
+		}
+		if isIllegal || optimized {
 			b.switchIdx(idx, start)
 			start++
 			end--
@@ -252,7 +290,7 @@ func (b *Board) randPos(c Color, r *rand.Rand) int {
 			return b.histPos[idx]
 		}
 	}
-
+	//fmt.Println(b.posNum, b.takeNum, illegalN, optimizedN, float64(optimizedN)/float64(illegalN+1))
 	return PASS
 }
 
@@ -263,7 +301,7 @@ func (b *Board) optimized(c Color, pos int) bool {
 	}
 	//return b.isMyEyeOrRivalBigEye(c, pos)
 	return b.isMyTrueEye(c, pos)
-	//return false
+	return false
 }
 
 func (b *Board) isMyTrueEye(c Color, pos int) bool {
@@ -277,6 +315,8 @@ func (b *Board) isMyTrueEye(c Color, pos int) bool {
 		return true // 我方眼位
 	}
 	return false
+	//return !ok && ok2 && len(s) > 7 //对方大眼
+
 }
 
 //判断是否是己方的眼位或对方的大眼
@@ -292,6 +332,17 @@ func (b *Board) isMyEyeOrRivalBigEye(c Color, pos int) bool {
 func (b *Board) isIllegalPos(pos int, c Color) bool {
 	return b.isSuicide(pos, c) || b.isSuperKO(c, pos)
 }
+
+// 判断是不是自杀
+func (b *Board) isSuicide(pos int, c Color) bool {
+	if ok, _ := b.isReachedColorAndGetBlock(EMPTY, pos, true); !ok { //无气
+		if !b.canTake(reverseColor(c), pos) { // 不能提子
+			return true // 无气且不能提子，自杀
+		}
+	}
+	return false
+}
+
 func (b *Board) isSuperKO(c Color, pos int) bool {
 	rc := reverseColor(c)
 	hb := b.zh.calcBoardHash(b.zh.hash, pos, EMPTY, c)
@@ -299,17 +350,6 @@ func (b *Board) isSuperKO(c Color, pos int) bool {
 		hb = b.zh.calcBoardHash(hb, p, rc, EMPTY)
 	}
 	return b.zh.histHash[hb]
-}
-
-// 判断是不是自杀
-func (b *Board) isSuicide(pos int, c Color) bool {
-	rc := reverseColor(c)
-	if ok, _ := b.isReachedColorAndGetBlock(EMPTY, pos, true); !ok { //无气
-		if !b.canTake(rc, pos) { // 不能提子
-			return true // 无气且不能提子，自杀
-		}
-	}
-	return false
 }
 
 func (b *Board) canTake(c Color, pos int) bool {
@@ -406,11 +446,11 @@ func (b *Board) print() {
 	//time.Sleep(time.Second)
 	fmt.Printf("moveN:%3d ,moveB:%3d ,moveW:%3d ,posN:%4d ,posB:%4d ,posW:%4d\n", b.moveNum[WHITE]+b.moveNum[BLACK], b.moveNum[WHITE], b.moveNum[BLACK],
 		b.posNum, b.colorNum[BLACK], b.colorNum[WHITE])
-	fmt.Printf("takeN:%3d ,takeB:%3d ,takeW:%3d ,scrN:%4d ,scrB:%4d ,scrW:%4d\n", b.takeNum[WHITE]+b.takeNum[BLACK], b.takeNum[WHITE], b.takeNum[BLACK],
-		b.score[BLACK]-b.score[WHITE], b.score[BLACK], b.score[WHITE])
+	fmt.Printf("takeN:%3d ,takeB:%3d ,takeW:%3d ,scrN:%3d ,scrB:%3d ,scrW:%3d\n", b.takeNum[WHITE]+b.takeNum[BLACK], b.takeNum[WHITE], b.takeNum[BLACK],
+		(b.score[BLACK]-b.score[WHITE])/2, (b.score[BLACK])/2, (b.score[WHITE])/2)
 	fmt.Printf("passN:%3d ,passB:%3d ,passW:%3d ,boardhash:%d\n ", b.passNum[WHITE]+b.passNum[BLACK], b.passNum[WHITE], b.passNum[BLACK], b.zh.hash)
 	fmt.Println()
-	fmt.Print(" ")
+	fmt.Print("  ")
 	for i := 0; i < b.size; i++ {
 		fmt.Printf("%2d", i+1)
 	}
@@ -437,7 +477,30 @@ func (b *Board) print() {
 		}
 	}
 	fmt.Println()
+	fmt.Println(b.Bytes())
 }
 func (c Color) String() string {
 	return colorString[c]
+}
+
+func (b *Board) Bytes() []byte {
+	bs := b.bytes
+	l := b.long
+	for i := 0; i < l; i++ {
+		bs[2*i], bs[2*i+1] = b.board[i].byte()
+	}
+	return bs
+}
+
+func (b *Board) CheckError() error {
+	if (b.moveNum[WHITE] + b.moveNum[BLACK] - b.passNum[WHITE] - b.passNum[BLACK] - b.posNum - b.takeNum[BLACK] - b.takeNum[WHITE]) != 0 {
+		return fmt.Errorf("走子，落子，和提子不对")
+	}
+	if (b.score[BLACK] + b.score[WHITE]) != b.long*2 {
+		return fmt.Errorf("得分不对")
+	}
+	if b.posNum != b.colorNum[WHITE]+b.colorNum[BLACK] || b.posNum+b.colorNum[EMPTY] != b.long {
+		return fmt.Errorf("棋盘上的石头数量不对")
+	}
+	return nil
 }
