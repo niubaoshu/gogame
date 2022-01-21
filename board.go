@@ -34,12 +34,7 @@ const (
 	BLACK
 	REACH
 
-	WALL
-	RESULT
-	RESULT2
-
 	playerNum = 2
-	PASS      = -1
 )
 
 func (c Color) byte() byte {
