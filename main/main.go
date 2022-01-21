@@ -10,13 +10,13 @@ import (
 )
 
 func main() {
-	var num int64 = 2
+	var num int64 = 100000
 	sum := num
 	size := 19
 	long := size * size
 	long2 := long + 2
 	n := 50
-	in := make(chan []byte, n)
+	in := make(chan []byte, 4*n)
 	out := make(chan []byte, 4*n)
 	var wg sync.WaitGroup
 	done := make(chan struct{})
@@ -56,7 +56,7 @@ func main() {
 			os.Exit(0)
 		default:
 			time.Sleep(time.Second * 1)
-			fmt.Println(1-float64(num)/float64(sum), perNum-num)
+			fmt.Println(1-float64(num)/float64(sum), perNum-num, len(out), len(in))
 			perNum = num
 		}
 	}

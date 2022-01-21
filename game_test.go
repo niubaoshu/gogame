@@ -16,9 +16,6 @@ func TestGame(t *testing.T) {
 func testBoard(t *testing.T, b *Board) {
 	b.RandRun()
 	b.CalcScore()
-	if err := b.CheckError(); err != nil {
-		t.Error("报错了", err)
-	}
 	b.Display()
 	t.Log(b.Bytes())
 }
