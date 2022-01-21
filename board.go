@@ -265,8 +265,6 @@ func (b *Board) setColorAndHash(c Color, pos int) {
 func (b *Board) randPos(c Color, r *rand.Rand) int {
 	start := b.posNum
 	end := b.long - b.posNum
-	illegalN := 0
-	optimizedN := 0
 	for start < b.long {
 		idx := start + r.Intn(end)
 		pos := b.histPos[idx]
@@ -279,14 +277,7 @@ func (b *Board) randPos(c Color, r *rand.Rand) int {
 		b.board[pos] = c
 		isIllegal := b.isIllegalPos(pos, c)
 		b.board[pos] = EMPTY
-		if isIllegal {
-			illegalN++
-		}
-		optimized := b.optimized(c, pos)
-		if optimized {
-			optimizedN++
-		}
-		if isIllegal || optimized {
+		if isIllegal || b.optimized(c, pos) {
 			b.switchIdx(idx, start)
 			start++
 			end--
