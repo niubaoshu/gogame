@@ -22,44 +22,38 @@ A player's score is the number of points of her color, plus the number of empty 
 The player with the higher score at the end of the game is the winner. Equal scores result in a tie.
 */
 
-type Color int
-
 var (
-	colorString = []string{WHITE: "WHITE", EMPTY: "EMPTY", BLACK: "BLACK", REACH: "REACH"}
+	colorString = []string{WHITE: "WHITE", EMPTY: "EMPTY", BLACK: "BLACK", WALL: "WALL", REACH: "REACH"}
 )
 
 const (
-	WHITE Color = iota
+	WHITE byte = iota
 	EMPTY
 	BLACK
+	WALL
 	REACH
 
 	playerNum = 2
 )
 
-func (c Color) byte() byte {
-	return byte(c - EMPTY)
-	//return (byte(c) & 0x02) >> 1, byte(c) & 0x01
-	//return  (byte(c)&0x02)>>1 + byte('0'), byte(c)&0x01 + byte('0')
-}
-
 type Board struct {
 	size       int //棋盘大小
 	long       int //size*size
-	board      []Color
+	board      []byte
 	zh         *zobrist // 用于判断全同
 	neighbours [][]int  // 邻居
 	blockCache []int    // 块缓存
 	deadCache  []int    // 死子缓存
 	idxPos     []int    // 索引每个pos在histPos中的index
 	histPos    []int    // [b.emptyNum:]已落子位置
-	bytes      []byte   // bytes
 	colorNum   [3]int   // 棋盘上黑白空颜色数量
 	moveNum    [3]int   // 走子总数
 	takeNum    [3]int   // 被提子数
 	score      [3]int   // 结果数单位是半子
 	passNum    [3]int   // pass统计
 	lastPos    int      // 最后一个落子位置
+	simpleKo   [][2]int // 简单劫
+	koIdx      int
 }
 
 func NewBoard(size int) *Board {
@@ -67,7 +61,7 @@ func NewBoard(size int) *Board {
 	b := &Board{
 		long:       long,
 		size:       size,
-		board:      make([]Color, long),
+		board:      make([]byte, long+2),
 		zh:         newZobrist(long),
 		histPos:    make([]int, long),
 		idxPos:     make([]int, long),
@@ -75,7 +69,6 @@ func NewBoard(size int) *Board {
 		blockCache: make([]int, long),
 		deadCache:  make([]int, long),
 		lastPos:    -1,
-		bytes:      make([]byte, long+2), // x+y
 	}
 
 	b.colorNum[EMPTY] = long
@@ -106,16 +99,16 @@ func (b *Board) Reset(bytes []byte) {
 	long := b.long
 	b.colorNum[EMPTY] = long
 	for i := 0; i < long; i++ {
-		b.board[i] = EMPTY
+		bytes[i] = EMPTY
 		b.histPos[i] = i
 		b.idxPos[i] = i
 	}
-	b.bytes = bytes
+	b.board = bytes
 	b.zh.reset()
 }
 
 // 获得pos所在的块，并测试pos所在的块能否到达c色
-func (b *Board) isReachedColorAndGetBlock(c Color, pos int, noBlock bool) (bool, []int) {
+func (b *Board) isReachedColorAndGetBlock(c byte, pos int, noBlock bool) (bool, []int) {
 	reach := false
 	pc := b.board[pos]
 	block := b.blockCache
@@ -156,7 +149,8 @@ func (b *Board) RandRun() {
 	player := BLACK
 	prePass := false
 	for {
-		if b.randMove(player, r) {
+		end := b.colorNum[EMPTY]
+		if b.randMove(player, r, end) {
 			b.passNum[player]++
 			if prePass { // 两pass终局
 				break
@@ -169,54 +163,52 @@ func (b *Board) RandRun() {
 	}
 }
 
-func (b *Board) move(c Color, pos int, deadPos []int) {
+func (b *Board) move(c byte, pos int) {
 	// state
 	b.moveNum[c]++
 	b.lastPos = pos
 	b.changeBoard(c, pos) // 落子
 	rc := reverseColor(c)
-	if len(deadPos) == 0 {
-		deadPos = b.getDeadPos(rc, pos)
-	}
-	b.takeNum[rc] += len(deadPos)
+	deadPos := b.getDeadPos(rc, pos)
+	b.takeNum[int(rc)] += len(deadPos)
 	for _, p := range deadPos {
 		b.changeBoard(EMPTY, p) // 提子
 	}
+
+	//测试
+	b.checkSuperKO(c, pos)
+	b.CheckError(c, pos)
+
 	b.zh.histHash[b.zh.hash] = true
-	// 测试
-	//b.CheckError(c, pos)
 }
 
-func (b *Board) changeBoard(c Color, pos int) {
+func (b *Board) checkSuperKO(c byte, pos int) {
+	if b.takeNum[BLACK] <= 0 && b.takeNum[WHITE] <= 0 {
+		return
+	}
+	if b.zh.histHash[b.zh.hash] {
+		fmt.Println("劫出现了，", colorString[c], b.ToXY(pos))
+	}
+}
+
+func (b *Board) changeBoard(c byte, pos int) {
 	b.colorNum[b.board[pos]]--
 	b.zh.hash = b.zh.calcBoardHash(b.zh.hash, pos, b.board[pos], c)
 	b.board[pos] = c
 	b.switchIdx(b.idxPos[pos], b.colorNum[EMPTY])
 	b.colorNum[c]++
-
 }
 
-func (b *Board) randMove(c Color, r *rand.Rand) (isPass bool) {
-	end := b.colorNum[EMPTY]
+func (b *Board) randMove(c byte, r *rand.Rand, end int) (isPass bool) {
 	for end > 0 {
 		idx := r.Intn(end)
 		pos := b.histPos[idx]
 
-		// 测试代码
-		if b.board[pos] != EMPTY {
-			fmt.Println("错误", b.ToXY(pos), b.board[pos], b.colorNum[EMPTY])
-			b.Display()
-			panic("随机到已落子的位置")
-		}
-
-		b.board[pos] = c
-		isIllegal := b.isIllegalPos(c, pos)
-		b.board[pos] = EMPTY
-		if isIllegal || b.optimized(c, pos) {
+		if b.isIllegalPos(c, pos) || b.optimized(c, pos) {
 			end--
 			b.switchIdx(idx, end)
 		} else {
-			b.move(c, pos, nil)
+			b.move(c, pos)
 			return false
 		}
 	}
@@ -224,17 +216,50 @@ func (b *Board) randMove(c Color, r *rand.Rand) (isPass bool) {
 	return true
 }
 
-func (b *Board) isIllegalPos(c Color, pos int) bool {
+func (b *Board) searchTree(c byte, end int) int {
+	end--
+	for end > 0 {
+		pos := b.histPos[end]
+		if b.isIllegalPos(c, pos) || b.optimized(c, pos) {
+			end--
+		} else {
+			b.simpleMove(c, pos, end)
+		}
+
+	}
+	return 0
+}
+
+func (b *Board) simpleMove(c byte, pos int, end int) int {
+	b.board[pos] = c
+	b.switchIdx(b.idxPos[pos], end)
+	end--
+	rc := reverseColor(c)
+	dead := b.getDeadPos(rc, pos)
+	for _, p := range dead {
+		b.board[pos] = EMPTY
+		b.switchIdx(b.idxPos[p], end)
+		end--
+	}
+	//b.searchTree(rc, end)
+	return 0
+}
+
+func (b *Board) isIllegalPos(c byte, pos int) bool {
+	b.board[pos] = c
+	defer func() { b.board[pos] = EMPTY }()
+	//isSuicide := b.isSuicide(c, pos)
+	//return isSuicide
 	return b.isSuicide(c, pos) || b.isSuperKO(c, pos)
 }
 
 // 判断是不是自杀
-func (b *Board) isSuicide(c Color, pos int) bool {
+func (b *Board) isSuicide(c byte, pos int) bool {
 	ok, _ := b.isReachedColorAndGetBlock(EMPTY, pos, true)
 	return !ok && !b.canTake(reverseColor(c), pos) // 无气 && 不能提子
 }
 
-func (b *Board) isSuperKO(c Color, pos int) bool {
+func (b *Board) isSuperKO(c byte, pos int) bool {
 	if b.takeNum[BLACK] <= 0 && b.takeNum[WHITE] <= 0 {
 		return false
 	}
@@ -246,40 +271,27 @@ func (b *Board) isSuperKO(c Color, pos int) bool {
 	return b.zh.histHash[hb]
 }
 
-// optimized 需要确保不会优化掉最优解就可以
-func (b *Board) optimized(c Color, pos int) bool {
+// optimized 需要确保优化掉的局面不会比pass一手差
+func (b *Board) optimized(c byte, pos int) bool {
 	if b.moveNum[BLACK] < 100 {
 		return false
 	}
-	//return b.isMyEyeOrRivalBigEye(c, pos)
 	return b.isMyTrueEye(c, pos)
 }
 
-func (b *Board) isMyTrueEye(c Color, pos int) bool {
+func (b *Board) isMyTrueEye(c byte, pos int) bool {
 	rc := reverseColor(c)
 	ok, _ := b.isReachedColorAndGetBlock(c, pos, true)
-	ok2, s := b.isReachedColorAndGetBlock(rc, pos, false)
+	ok2, _ := b.isReachedColorAndGetBlock(rc, pos, true)
+	//ok2, s := b.isReachedColorAndGetBlock(rc, pos, false)
 	b.board[pos] = rc
 	canTake := b.canTake(c, pos)
 	b.board[pos] = EMPTY
-	if ok && !ok2 && !canTake {
-		return true
-	} // 只能到达我方颜色且对方落此位置不能提子
-	return !ok && ok2 && len(s) > 7 //对方大眼
-
+	//return ok && !ok2 && !canTake || !ok && ok2 && len(s) > 7 // 只能到达我方颜色且对方落此位置不能提子 或对方大眼
+	return ok && !ok2 && !canTake // 只能到达我方颜色且对方落此位置不能提子
 }
 
-//判断是否是己方的眼位或对方的大眼
-func (b *Board) isMyEyeOrRivalBigEye(c Color, pos int) bool {
-	ok, _ := b.isReachedColorAndGetBlock(c, pos, true)
-	ok2, s := b.isReachedColorAndGetBlock(reverseColor(c), pos, false)
-	if ok && !ok2 { // 只能到达我方颜色
-		return true // 我方眼位
-	}
-	return !ok && ok2 && len(s) > 6 //对方大眼
-}
-
-func (b *Board) canTake(c Color, pos int) bool {
+func (b *Board) canTake(c byte, pos int) bool {
 	for _, nb := range b.neighbours[pos] {
 		if b.board[nb] == c {
 			if ok, _ := b.isReachedColorAndGetBlock(EMPTY, nb, true); !ok {
@@ -291,7 +303,7 @@ func (b *Board) canTake(c Color, pos int) bool {
 }
 
 //获得pos相邻的c色死子
-func (b *Board) getDeadPos(c Color, pos int) []int {
+func (b *Board) getDeadPos(c byte, pos int) []int {
 	first := true
 	dead := b.deadCache
 	l := 0
@@ -334,7 +346,7 @@ func (b *Board) switchIdx(i1, i2 int) {
 
 }
 
-func reverseColor(c Color) Color {
+func reverseColor(c byte) byte {
 	if c == BLACK {
 		return WHITE
 	} else {
@@ -347,7 +359,7 @@ func (b *Board) ToXY(pos int) string {
 }
 
 func (b *Board) Display() {
-	fmt.Printf("moveN:%3d ,moveB:%3d ,moveW:%3d ,posN:%4d ,posB:%4d ,posW:%4d\n", b.moveNum[WHITE]+b.moveNum[BLACK], b.moveNum[WHITE], b.moveNum[BLACK],
+	fmt.Printf("moveN:%3d ,moveB:%3d ,moveW:%3d ,posN:%3d ,posB:%3d ,posW:%3d\n", b.moveNum[WHITE]+b.moveNum[BLACK], b.moveNum[WHITE], b.moveNum[BLACK],
 		b.long-b.colorNum[EMPTY], b.colorNum[BLACK], b.colorNum[WHITE])
 	fmt.Printf("takeN:%3d ,takeB:%3d ,takeW:%3d ,scrN:%3d ,scrB:%3d ,scrW:%3d\n", b.takeNum[WHITE]+b.takeNum[BLACK], b.takeNum[WHITE], b.takeNum[BLACK],
 		b.score[EMPTY], b.score[BLACK], b.score[WHITE])
@@ -382,23 +394,17 @@ func (b *Board) Display() {
 	fmt.Printf("\n\n")
 	//fmt.Println(b.Bytes())
 }
-func (c Color) String() string {
-	return colorString[c]
-}
 
 func (b *Board) Bytes() []byte {
-	bs := b.bytes
+	bs := b.board
 	l := b.long
-	for i := 0; i < l; i++ {
-		bs[i] = byte(b.board[i] - EMPTY)
-	}
-	score := b.score[EMPTY]
+	score := b.score[EMPTY] + b.long
 	bs[l] = byte(score >> 8)
 	bs[l+1] = byte(score)
 	return bs
 }
 
-func (b *Board) CheckError(c Color, pos int) {
+func (b *Board) CheckError(c byte, pos int) {
 	for i := 0; i < b.long; i++ {
 		if i >= b.colorNum[EMPTY] && b.board[b.histPos[i]] != WHITE && b.board[b.histPos[i]] != BLACK ||
 			i < b.colorNum[EMPTY] && b.board[b.histPos[i]] != EMPTY {
@@ -448,18 +454,20 @@ func (b *Board) CalcScore() int {
 		} else if ic == WHITE {
 			wScore += 2
 		} else if ic == EMPTY {
-			reachedBlack, _ := b.isReachedColorAndGetBlock(BLACK, i, true)
-			reachedWhite, _ := b.isReachedColorAndGetBlock(WHITE, i, true)
-			if reachedBlack && !reachedWhite {
+			//reachedBlack, _ := b.isReachedColorAndGetBlock(BLACK, i, true)
+			//reachedWhite, _ := b.isReachedColorAndGetBlock(WHITE, i, true)
+			//if reachedBlack && !reachedWhite {
+			if b.board[b.neighbours[i][0]] == BLACK {
 				bScore += 2
 			}
-			if reachedWhite && !reachedBlack {
+			//if reachedWhite && !reachedBlack {
+			if b.board[b.neighbours[i][0]] == WHITE {
 				wScore += 2
 			}
-			if reachedBlack && reachedWhite {
-				wScore++
-				bScore++
-			}
+			//if reachedBlack && reachedWhite {
+			//	wScore++
+			//	bScore++
+			//}
 		}
 	}
 	b.score[WHITE] = wScore / 2

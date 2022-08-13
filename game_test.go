@@ -7,17 +7,16 @@ import (
 func TestGame(t *testing.T) {
 	b := NewBoard(19)
 	testBoard(t, b)
-	b.Reset(b.bytes)
+	b.Reset(b.board)
 	testBoard(t, b)
 	//testBoard(t, 9, false)
 	//testBoard(t, 10, false)
 }
 
 func testBoard(t *testing.T, b *Board) {
-	b.RandRun()
-	b.CalcScore()
+	b.GenGame()
 	b.Display()
-	t.Log(b.Bytes())
+	//t.Log(b.Bytes())
 }
 func TestGame2(t *testing.T) {
 	//b := NewBoard(19)

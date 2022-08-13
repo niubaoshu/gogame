@@ -10,54 +10,32 @@ import (
 )
 
 func main() {
-	var num int64 = 100000
-	sum := num
-	size := 19
-	long := size * size
-	long2 := long + 2
-	n := 50
-	in := make(chan []byte, 4*n)
-	out := make(chan []byte, 4*n)
-	var wg sync.WaitGroup
-	done := make(chan struct{})
+	trainFile := "goGame_train.data"
+	testFile := "goGame_test.data"
+	var trainNum int64 = 100000
+	var testNum int64 = 100000
+	sum := trainNum + testNum
+	d2 := make(chan struct{})
+
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Println("Recovered in f", r)
-			}
-		}()
-		err := openFile(long, "goGame.data", in, out, done)
-		if err != nil {
-			fmt.Println(err)
-		}
+		done := make(chan struct{})
+		genData(trainFile, 19, &trainNum, done)
+		trainNum = 0
+		<-done
+		genData(testFile, 19, &testNum, done)
+		d2 <- <-done
 	}()
-	for i := 0; i < 3*n; i++ {
-		out <- make([]byte, long2)
-	}
-	wg.Add(n)
-	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
-			g := goGame.NewBoard(size)
-			for atomic.AddInt64(&num, -1) >= 0 {
-				in <- g.GenGame()
-				g.Reset(<-out)
-			}
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(in)
-	}()
+
 	perNum := sum
 	for {
 		select {
-		case <-done:
+		case <-d2:
 			os.Exit(0)
 		default:
 			time.Sleep(time.Second * 1)
-			fmt.Println(1-float64(num)/float64(sum), perNum-num, len(out), len(in))
-			perNum = num
+			s := trainNum + testNum
+			fmt.Println(1-float64(s)/float64(sum), perNum-s)
+			perNum = s
 		}
 	}
 }
@@ -95,4 +73,53 @@ breakLabel:
 	}
 	done <- struct{}{}
 	return nil
+}
+
+func genData(fileName string, size int, num *int64, done chan struct{}) {
+	var wg = sync.WaitGroup{}
+
+	long := size * size
+	long2 := long + 2
+	n := 20
+	in := make(chan []byte, 2*n)
+	out := make(chan []byte, 2*n)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Println("Recovered in f", r)
+			}
+		}()
+		err := openFile(long, fileName, in, out, done)
+		if err != nil {
+			fmt.Println(err)
+		}
+	}()
+	for i := 0; i < n; i++ {
+		b := make([]byte, long2)
+		for i := 0; i < long2; i++ {
+			b[i] = goGame.EMPTY
+		}
+		out <- b
+	}
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			g := goGame.NewBoard(size)
+			defer func() {
+				wg.Done()
+				//if err := recover(); err != nil {
+				//	g.Display()
+				//	runtime.StartTrace()
+				//	fmt.Println(err)
+				//}
+			}()
+			for atomic.AddInt64(num, -1) >= 0 {
+				in <- g.GenGame()
+				//g.Display()
+				g.Reset(<-out)
+			}
+		}()
+	}
+	wg.Wait()
+	close(in)
 }

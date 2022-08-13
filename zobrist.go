@@ -28,7 +28,7 @@ func newZobrist(long int) *zobrist {
 	return z
 }
 
-func (z *zobrist) calcBoardHash(perHash uint64, pos int, oldColor, newColor Color) uint64 {
+func (z *zobrist) calcBoardHash(perHash uint64, pos int, oldColor, newColor byte) uint64 {
 	return perHash ^ z.boardHash[oldColor][pos] ^ z.boardHash[newColor][pos]
 }
 func (z *zobrist) reset() {
